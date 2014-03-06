@@ -48,11 +48,21 @@ $(document).ready(function () {
     });
 });
 
+Hello.invert_keys = function(obj) {
+	var keys = {};
+	for (var key in obj) {
+		keys[obj[key]] = key;
+	}
+	return keys;
+}
+
 $(document).bind('connect', function (ev, data) {
     var conn = new Strophe.Connection(
         "http://bosh.metajack.im:5280/xmpp-httpbind");
 
     conn.connect(data.jid, data.password, function (status) {
+        var statuses = Hello.invert_keys(Strophe.Status);
+	Hello.log('Status is '+status+' -- '+statuses[status]);
         if (status === Strophe.Status.CONNECTED) {
             $(document).trigger('connected');
         } else if (status === Strophe.Status.DISCONNECTED) {
