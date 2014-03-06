@@ -2,8 +2,9 @@
 "http://www.w3.org/TR/html4/strict.dtd">
 <html>
   <head>
-    <title>Hello - Chapter 3</title>
-    <meta content="charset=utf-8" />
+    <meta http-equiv="Content-type" content="text/html;charset=UTF-8">
+    <title>Peek - Chapter 4</title>
+
     <link rel='stylesheet' href='http://ajax.googleapis.com/ajax/libs/jqueryui/1.7.0/themes/cupertino/jquery-ui.css'>
     <script src='http://ajax.googleapis.com/ajax/libs/jquery/1.3.2/jquery.js'></script>
     <script src='http://ajax.googleapis.com/ajax/libs/jqueryui/1.7.2/jquery-ui.js'></script>
@@ -14,10 +15,18 @@
     <link rel='stylesheet' href='/public/css/hello.css'>
     <script src='/public/assets/js/app.js'></script>
   </head>
-  <body>
-    <h1>Hello</h1>
+   <body>
+    <h1>Peek</h1>
 
-    <div id='log'>
+    <div id='console'></div>
+    <textarea id='input' class='disabled'
+              disabled='disabled'></textarea>
+
+    <div id='buttonbar'>
+      <input id='send_button' type='button' value='Send Data'
+             disabled='disabled' class='button'>
+      <input id='disconnect_button' type='button' value='Disconnect'
+             disabled='disabled' class='button'>
     </div>
 
     <!-- login dialog -->
