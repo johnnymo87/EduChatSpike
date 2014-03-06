@@ -1,80 +1,83 @@
-(function() {
-  var Client = {
+var Hello = {
     connection: null,
-    log: function(msg) {
-      $('#log').append("<p>" + msg + "</p>");
+    start_time: null,
+
+    log: function (msg) {
+        $('#log').append("<p>" + msg + "</p>");
     },
-    send_ping: function(to) {
-      var ping = $iq({
-        to: to,
-        type: "get",
-        id: "ping1"
-      }).c("ping", { xmlns: "urn:xmpp:ping" });
 
-      Client.connection.send(ping);
+    send_ping: function (to) {
+        var ping = $iq({
+            to: to,
+            type: "get",
+            id: "ping1"}).c("ping", {xmlns: "urn:xmpp:ping"});
+
+        Hello.log("Sending ping to " + to + ".");
+
+        Hello.start_time = (new Date()).getTime();
+        Hello.connection.send(ping);
+    },
+
+    handle_pong: function (iq) {
+        var elapsed = (new Date()).getTime() - Hello.start_time;
+        Hello.log("Received pong from server in " + elapsed + "ms.");
+
+        Hello.connection.disconnect();
+        
+        return false;
     }
-  };
+};
 
-//   var conn = new Strophe.Connection("http://bosh.metajack.im:5280/xmpp-httpbind");
-//   conn.connect("educhatspiketest@blah.im", "randomrandom", function(status) {
-  var conn = new Strophe.Connection("http://localhost:3000/http-bind");
-  conn.connect("testuser@examples.org", "embeddedchatforall", function(status) {
-    switch (status) {
-      case Strophe.Status.CONNECTED:
-        $(document).trigger('connected');
-        break;
+$(document).ready(function () {
+    $('#login_dialog').dialog({
+        autoOpen: true,
+        draggable: false,
+        modal: true,
+        title: 'Connect to XMPP',
+        buttons: {
+            "Connect": function () {
+                $(document).trigger('connect', {
+                    jid: $('#jid').val().toLowerCase(),
+                    password: $('#password').val()
+                });
+                
+                $('#password').val('');
+                $(this).dialog('close');
+            }
+        }
+    });
+});
 
-      case Strophe.Status.CONNECTING:
-        $(document).trigger("connecting");
-        break;
+$(document).bind('connect', function (ev, data) {
+    var conn = new Strophe.Connection(
+        "http://bosh.metajack.im:5280/xmpp-httpbind");
 
-      case Strophe.Status.DISCONNECTED:
-        $(document).trigger('disconnected');
-        break;
+    conn.connect(data.jid, data.password, function (status) {
+        if (status === Strophe.Status.CONNECTED) {
+            $(document).trigger('connected');
+        } else if (status === Strophe.Status.DISCONNECTED) {
+            $(document).trigger('disconnected');
+        }
+    });
 
-      case Strophe.Status.DISCONNECTING:
-        $(document).trigger("disconnecting");
-        break;
+    Hello.connection = conn;
+});
 
-      case Strophe.Status.CONNFAIL:
-        $(document).trigger('connfail');
-        break;
+$(document).bind('connected', function () {
+    // inform the user
+    Hello.log("Connection established.");
 
-      case Strophe.Status.AUTHFAIL:
-        $(document).trigger('authfail');
-        break;
-    }
+    Hello.connection.addHandler(Hello.handle_pong, null, "iq", null, "ping1");
 
-    Client.connection = conn;
-  });
+    var domain = Strophe.getDomainFromJid(Hello.connection.jid);
+    
+    Hello.send_ping(domain);
 
-  $(document).bind('connected', function() {
-    Client.log("Connection established.");
+});
 
-    var domain = Strophe.getDomainFromJid(Client.connection.jid);
+$(document).bind('disconnected', function () {
+    Hello.log("Connection terminated.");
 
-    Client.send_ping(domain);
-  });
-
-  $(document).bind("connecting", function() {
-    Client.log("Connecting...");
-  });
-
-  $(document).bind('disconnected', function() {
-    Client.log("Connection terminated.");
-
-    Client.connection = null;
-  });
-
-  $(document).bind('disconnecting', function() {
-    Client.log("Disconnecting from server.");
-  });
-
-  $(document).bind('authfail', function() {
-    Client.log("Authentication failed!");
-  });
-
-  $(document).bind("connfail", function() {
-    Client.log("Connection failed!");
-  });
-})();
+    // remove dead connection object
+    Hello.connection = null;
+});
