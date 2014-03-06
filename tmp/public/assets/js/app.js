@@ -1,108 +1,147 @@
-var Peek = {
+var Groupie = {
     connection: null,
+    room: null,
+    nickname: null,
 
-    show_traffic: function (body, type) {
-        if (body.childNodes.length > 0) {
-            var console = $('#console').get(0);
-            var at_bottom = console.scrollTop >= console.scrollHeight -
-                console.clientHeight;;
+    NS_MUC: "http://jabber.org/protocol/muc",
 
-            $.each(body.childNodes, function () {
-                $('#console').append("<div class='" + type + "'>" +
-                                     Peek.pretty_xml(this) +
-                                     "</div>");
-            });
+    joined: null,
+    participants: null,
 
-            if (at_bottom) {
-                console.scrollTop = console.scrollHeight;
-            }
-        }
-    },
+    on_presence: function (presence) {
+        var from = $(presence).attr('from');
+        var room = Strophe.getBareJidFromJid(from);
 
-    pretty_xml: function (xml, level) {
-        var i, j;
-        var result = [];
-        if (!level) {
-            level = 0;
-        }
+        // make sure this presence is for the right room
+        if (room === Groupie.room) {
+            var nick = Strophe.getResourceFromJid(from);
+          
+            if ($(presence).attr('type') === 'error' &&
+                !Groupie.joined) {
+                // error joining room; reset app
+                Groupie.connection.disconnect();
+            } else if (!Groupie.participants[nick] &&
+                $(presence).attr('type') !== 'unavailable') {
+                // add to participant list
+                var user_jid = $(presence).find('item').attr('jid');
+                Groupie.participants[nick] = user_jid || true;
+                $('#participant-list').append('<li>' + nick + '</li>');
 
-        result.push("<div class='xml_level" + level + "'>");
-        result.push("<span class='xml_punc'>&lt;</span>");
-        result.push("<span class='xml_tag'>");
-        result.push(xml.tagName);
-        result.push("</span>");
-
-        // attributes
-        var attrs = xml.attributes;
-        var attr_lead = []
-        for (i = 0; i < xml.tagName.length + 1; i++) {
-            attr_lead.push("&nbsp;");
-        }
-        attr_lead = attr_lead.join("");
-
-        for (i = 0; i < attrs.length; i++) {
-            result.push(" <span class='xml_aname'>");
-            result.push(attrs[i].nodeName);
-            result.push("</span><span class='xml_punc'>='</span>");
-            result.push("<span class='xml_avalue'>");
-            result.push(attrs[i].nodeValue);
-            result.push("</span><span class='xml_punc'>'</span>");
-
-            if (i !== attrs.length - 1) {
-                result.push("</div><div class='xml_level" + level + "'>");
-                result.push(attr_lead);
-            }
-        }
-
-        if (xml.childNodes.length === 0) {
-            result.push("<span class='xml_punc'>/&gt;</span></div>");
-        } else {
-            result.push("<span class='xml_punc'>&gt;</span></div>");
-
-            // children
-            $.each(xml.childNodes, function () {
-                if (this.nodeType === 1) {
-                    result.push(Peek.pretty_xml(this, level + 1));
-                } else if (this.nodeType === 3) {
-                    result.push("<div class='xml_text xml_level" +
-                                (level + 1) + "'>");
-                    result.push(this.nodeValue);
-                    result.push("</div>");
+                if (Groupie.joined) {
+                    $(document).trigger('user_joined', nick);
                 }
-            });
-            
-            result.push("<div class='xml xml_level" + level + "'>");
-            result.push("<span class='xml_punc'>&lt;/</span>");
-            result.push("<span class='xml_tag'>");
-            result.push(xml.tagName);
-            result.push("</span>");
-            result.push("<span class='xml_punc'>&gt;</span></div>");
+            } else if (Groupie.participants[nick] &&
+                       $(presence).attr('type') === 'unavailable') {
+                // remove from participants list
+                $('#participant-list li').each(function () {
+                    if (nick === $(this).text()) {
+                        $(this).remove();
+                        return false;
+                    }
+                });
+
+                $(document).trigger('user_left', nick);
+            }
+
+            if ($(presence).attr('type') !== 'error' &&
+                !Groupie.joined) {
+                // check for status 110 to see if it's our own presence
+                if ($(presence).find("status[code='110']").length > 0) {
+                    // check if server changed our nick
+                    if ($(presence).find("status[code='210']").length > 0) {
+                        Groupie.nickname = Strophe.getResourceFromJid(from);
+                    }
+
+                    // room join complete
+                    $(document).trigger("room_joined");
+                }
+            }
         }
-        
-        return result.join("");
+
+        return true;
     },
 
-    text_to_xml: function (text) {
-        var doc = null;
-        if (window['DOMParser']) {
-            var parser = new DOMParser();
-            doc = parser.parseFromString(text, 'text/xml');
-        } else if (window['ActiveXObject']) {
-            var doc = new ActiveXObject("MSXML2.DOMDocument");
-            doc.async = false;
-            doc.loadXML(text);
-        } else {
-            throw {
-                type: 'PeekError',
-                message: 'No DOMParser object found.'
-            };
+    on_public_message: function (message) {
+        var from = $(message).attr('from');
+        var room = Strophe.getBareJidFromJid(from);
+        var nick = Strophe.getResourceFromJid(from);
+
+        // make sure message is from the right place
+        if (room === Groupie.room) {
+            // is message from a user or the room itself?
+            var notice = !nick;
+
+            // messages from ourself will be styled differently
+            var nick_class = "nick";
+            if (nick === Groupie.nickname) {
+                nick_class += " self";
+            }
+            
+            var body = $(message).children('body').text();
+
+            var delayed = $(message).children("delay").length > 0 ||
+                $(message).children("x[xmlns='jabber:x:delay']").length > 0;
+
+            // look for room topic change
+            var subject = $(message).children('subject').text();
+            if (subject) {
+                $('#room-topic').text(subject);
+            }
+
+            if (!notice) {
+                var delay_css = delayed ? " delayed" : "";
+
+                var action = body.match(/\/me (.*)$/);
+                if (!action) {
+                    Groupie.add_message(
+                        "<div class='message" + delay_css + "'>" +
+                            "&lt;<span class='" + nick_class + "'>" +
+                            nick + "</span>&gt; <span class='body'>" +
+                            body + "</span></div>");
+                } else {
+                    Groupie.add_message(
+                        "<div class='message action " + delay_css + "'>" +
+                            "* " + nick + " " + action[1] + "</div>");
+                }
+            } else {
+                Groupie.add_message("<div class='notice'>*** " + body +
+                                    "</div>");
+            }
         }
 
-        var elem = doc.documentElement;
-        if ($(elem).filter('parsererror').length > 0) {
-            return null;
+        return true;
+    },
+
+    add_message: function (msg) {
+        // detect if we are scrolled all the way down
+        var chat = $('#chat').get(0);
+        var at_bottom = chat.scrollTop >= chat.scrollHeight -
+            chat.clientHeight;
+        
+        $('#chat').append(msg);
+
+        // if we were at the bottom, keep us at the bottom
+        if (at_bottom) {
+            chat.scrollTop = chat.scrollHeight;
         }
-        return elem;
+    },
+
+    on_private_message: function (message) {
+        var from = $(message).attr('from');
+        var room = Strophe.getBareJidFromJid(from);
+        var nick = Strophe.getResourceFromJid(from);
+
+        // make sure this message is from the correct room
+        if (room === Groupie.room) {
+            var body = $(message).children('body').text();
+            Groupie.add_message("<div class='message private'>" +
+                                "@@ &lt;<span class='nick'>" +
+                                nick + "</span>&gt; <span class='body'>" +
+                                body + "</span> @@</div>");
+            
+        }
+
+        return true;
     }
 };
 
@@ -111,89 +150,174 @@ $(document).ready(function () {
         autoOpen: true,
         draggable: false,
         modal: true,
-        title: 'Connect to XMPP',
+        title: 'Join a Room',
         buttons: {
-            "Connect": function () {
+            "Join": function () {
+                Groupie.room = $('#room').val().toLowerCase();
+                Groupie.nickname = $('#nickname').val();
+
                 $(document).trigger('connect', {
                     jid: $('#jid').val().toLowerCase(),
                     password: $('#password').val()
                 });
-                
+
                 $('#password').val('');
                 $(this).dialog('close');
             }
         }
     });
 
-    $('#disconnect_button').click(function () {
-        Peek.connection.disconnect();
+    $('#leave').click(function () {
+        $('#leave').attr('disabled', 'disabled');
+        Groupie.connection.send(
+            $pres({to: Groupie.room + "/" + Groupie.nickname,
+                   type: "unavailable"}));
+        Groupie.connection.disconnect();
     });
 
-    $('#send_button').click(function () {
-        var input = $('#input').val();
-        var error = false;
-        if (input.length > 0) {
-            if (input[0] === '<') {
-                var xml = Peek.text_to_xml(input);
-                if (xml) {
-                    Peek.connection.send(Strophe.copyElement(xml));
-                    $('#input').val('');
+    $('#input').keypress(function (ev) {
+        if (ev.which === 13) {
+            ev.preventDefault();
+
+            var body = $(this).val();
+
+            var match = body.match(/^\/(.*?)(?: (.*))?$/);
+            var args = null;
+            if (match) {
+                if (match[1] === "msg") {
+                    args = match[2].match(/^(.*?) (.*)$/);
+                    if (Groupie.participants[args[1]]) {
+                        Groupie.connection.send(
+                            $msg({
+                                to: Groupie.room + "/" + args[1],
+                                type: "chat"}).c('body').t(body));
+                        Groupie.add_message(
+                            "<div class='message private'>" +
+                                "@@ &lt;<span class='nick self'>" +
+                                Groupie.nickname +
+                                "</span>&gt; <span class='body'>" +
+                                args[2] + "</span> @@</div>");
+                    } else {
+                        Groupie.add_message(
+                            "<div class='notice error'>" +
+                                "Error: User not in room." +
+                                "</div>");
+                    }
+                } else if (match[1] === "me" || match[1] === "action") {
+                    Groupie.connection.send(
+                        $msg({
+                            to: Groupie.room,
+                            type: "groupchat"}).c('body')
+                            .t('/me ' + match[2]));
+                } else if (match[1] === "topic") {
+                    Groupie.connection.send(
+                        $msg({to: Groupie.room,
+                              type: "groupchat"}).c('subject')
+                            .text(match[2]));
+                } else if (match[1] === "kick") {
+                    Groupie.connection.sendIQ(
+                        $iq({to: Groupie.room,
+                             type: "set"})
+                            .c('query', {xmlns: Groupie.NS_MUC + "#admin"})
+                            .c('item', {nick: match[2],
+                                        role: "none"}));
+                } else if (match[1] === "ban") {
+                    Groupie.connection.sendIQ(
+                        $iq({to: Groupie.room,
+                             type: "set"})
+                            .c('query', {xmlns: Groupie.NS_MUC + "#admin"})
+                            .c('item', {jid: Groupie.participants[match[2]],
+                                        affiliation: "outcast"}));
+                } else if (match[1] === "op") {
+                    Groupie.connection.sendIQ(
+                        $iq({to: Groupie.room,
+                             type: "set"})
+                            .c('query', {xmlns: Groupie.NS_MUC + "#admin"})
+                            .c('item', {jid: Groupie.participants[match[2]],
+                                        affiliation: "admin"}));
+                } else if (match[1] === "deop") {
+                    Groupie.connection.sendIQ(
+                        $iq({to: Groupie.room,
+                             type: "set"})
+                            .c('query', {xmlns: Groupie.NS_MUC + "#admin"})
+                            .c('item', {jid: Groupie.participants[match[2]],
+                                        affiliation: "none"}));
                 } else {
-                    error = true;
-                }
-            } else if (input[0] === '$') {
-                try {
-                    var builder = eval(input);
-                    Peek.connection.send(builder);
-                    $('#input').val('');
-                } catch (e) {
-                    console.log(e);
-                    error = true;
+                    Groupie.add_message(
+                        "<div class='notice error'>" +
+                            "Error: Command not recognized." +
+                            "</div>");
                 }
             } else {
-                error = true;
+                Groupie.connection.send(
+                    $msg({
+                        to: Groupie.room,
+                        type: "groupchat"}).c('body').t(body));
             }
-        }
 
-        if (error) {
-            $('#input').animate({backgroundColor: "#faa"});
+            $(this).val('');
         }
-    });
-
-    $('#input').keypress(function () {
-        $(this).css({backgroundColor: '#fff'});
     });
 });
 
 $(document).bind('connect', function (ev, data) {
-    var conn = new Strophe.Connection(
-        "http://bosh.metajack.im:5280/xmpp-httpbind");
+    Groupie.connection = new Strophe.Connection(
+        'http://bosh.metajack.im:5280/xmpp-httpbind');
 
-    conn.xmlInput = function (body) {
-        Peek.show_traffic(body, 'incoming');
-    };
-
-    conn.xmlOutput = function (body) {
-        Peek.show_traffic(body, 'outgoing');
-    };
-
-    conn.connect(data.jid, data.password, function (status) {
-        if (status === Strophe.Status.CONNECTED) {
-            $(document).trigger('connected');
-        } else if (status === Strophe.Status.DISCONNECTED) {
-            $(document).trigger('disconnected');
-        }
-    });
-
-    Peek.connection = conn;
+    Groupie.connection.connect(
+        data.jid, data.password,
+        function (status) {
+            if (status === Strophe.Status.CONNECTED) {
+                $(document).trigger('connected');
+            } else if (status === Strophe.Status.DISCONNECTED) {
+                $(document).trigger('disconnected');
+            }
+        });
 });
 
 $(document).bind('connected', function () {
-    $('.button').removeAttr('disabled');
-    $('#input').removeClass('disabled').removeAttr('disabled');
+    Groupie.joined = false;
+    Groupie.participants = {};
+
+    Groupie.connection.send($pres().c('priority').t('-1'));
+    
+    Groupie.connection.addHandler(Groupie.on_presence,
+                                  null, "presence");
+    Groupie.connection.addHandler(Groupie.on_public_message,
+                                  null, "message", "groupchat");
+    Groupie.connection.addHandler(Groupie.on_private_message,
+                                  null, "message", "chat");
+
+    Groupie.connection.send(
+        $pres({
+            to: Groupie.room + "/" + Groupie.nickname
+        }).c('x', {xmlns: Groupie.NS_MUC}));
 });
 
 $(document).bind('disconnected', function () {
-    $('.button').attr('disabled', 'disabled');
-    $('#input').addClass('disabled').attr('disabled', 'disabled');
+    Groupie.connection = null;
+    $('#room-name').empty();
+    $('#room-topic').empty();
+    $('#participant-list').empty();
+    $('#chat').empty();
+    $('#login_dialog').dialog('open');
+});
+
+$(document).bind('room_joined', function () {
+    Groupie.joined = true;
+
+    $('#leave').removeAttr('disabled');
+    $('#room-name').text(Groupie.room);
+
+    Groupie.add_message("<div class='notice'>*** Room joined.</div>")
+});
+
+$(document).bind('user_joined', function (ev, nick) {
+    Groupie.add_message("<div class='notice'>*** " + nick +
+                         " joined.</div>");
+});
+
+$(document).bind('user_left', function (ev, nick) {
+    Groupie.add_message("<div class='notice'>*** " + nick +
+                        " left.</div>");
 });
